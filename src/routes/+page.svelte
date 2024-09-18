@@ -1,4 +1,5 @@
 <script lang="ts">
+    import { fade, slide } from "svelte/transition";
     import { onMount } from "svelte";
     import Peer from "peerjs";
 
@@ -38,10 +39,16 @@
     let currentMessage = "";
     let isChatVisible = false;
 
+    let displayName = "Anonymous";
+    let isControlsVisible = false;
+    let isMobile = false;
+
     function resizeCanvas() {
         if (canvas) {
             canvas.width = window.innerWidth;
-            canvas.height = window.innerHeight;
+            canvas.height = isMobile
+                ? window.innerHeight - 60
+                : window.innerHeight;
             if (ctx) {
                 ctx.fillStyle = "white";
                 ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -96,27 +103,29 @@
         }
     }
 
-    function startDrawing(e: MouseEvent) {
+    function startDrawing(e: MouseEvent | TouchEvent) {
         isDrawing = true;
-        [lastX, lastY] = [e.offsetX, e.offsetY];
+        const pos = getEventPosition(e);
+        [lastX, lastY] = [pos.x, pos.y];
     }
 
-    function draw(e: MouseEvent) {
+    function draw(e: MouseEvent | TouchEvent) {
         if (!isDrawing) return;
+        const pos = getEventPosition(e);
         let currentColor = isRainbowMode
             ? `hsl(${hue}, 100%, 50%)`
             : brushColor;
-        drawLine(lastX, lastY, e.offsetX, e.offsetY, currentColor, brushSize);
+        drawLine(lastX, lastY, pos.x, pos.y, currentColor, brushSize);
         sendData({
             type: "draw",
             x1: lastX,
             y1: lastY,
-            x2: e.offsetX,
-            y2: e.offsetY,
+            x2: pos.x,
+            y2: pos.y,
             color: currentColor,
             size: brushSize,
         });
-        [lastX, lastY] = [e.offsetX, e.offsetY];
+        [lastX, lastY] = [pos.x, pos.y];
 
         if (isRainbowMode) {
             hue = (hue + 1) % 360;
@@ -125,6 +134,19 @@
 
     function stopDrawing() {
         isDrawing = false;
+    }
+
+    function getEventPosition(e: MouseEvent | TouchEvent) {
+        let x, y;
+        if (e instanceof MouseEvent) {
+            x = e.offsetX;
+            y = e.offsetY;
+        } else {
+            const rect = canvas.getBoundingClientRect();
+            x = e.touches[0].clientX - rect.left;
+            y = e.touches[0].clientY - rect.top;
+        }
+        return { x, y };
     }
 
     function drawLine(
@@ -209,7 +231,7 @@
         if (currentMessage.trim()) {
             const messageData = {
                 type: "chat",
-                sender: peerId,
+                sender: displayName,
                 message: currentMessage.trim(),
             };
             sendData(messageData);
@@ -223,6 +245,10 @@
 
     function toggleChat() {
         isChatVisible = !isChatVisible;
+    }
+
+    function toggleControls() {
+        isControlsVisible = !isControlsVisible;
     }
 
     onMount(() => {
@@ -275,6 +301,18 @@
         (window as any).sendDevMessage = (message: string) => {
             sendDevMessage(message);
         };
+
+        // Check if the device is mobile
+        isMobile =
+            /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(
+                navigator.userAgent,
+            );
+
+        // Adjust canvas size for mobile devices
+        if (isMobile) {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight - 60; // Leave space for the toggle button
+        }
     });
 </script>
 
@@ -282,59 +320,84 @@
     <header class="jarring-header">{headerText}</header>
 {/if}
 
-<main>
+<main class:mobile={isMobile}>
     <canvas
         bind:this={canvas}
         on:mousedown={startDrawing}
         on:mousemove={draw}
         on:mouseup={stopDrawing}
         on:mouseout={stopDrawing}
-        on:blur={() => {}}
+        on:touchstart={startDrawing}
+        on:touchmove={draw}
+        on:touchend={stopDrawing}
     ></canvas>
 
-    <div class="controls">
-        <div class="connection-info">
-            Your ID: {peerId}
-            <button on:click={copyPeerId}>Copy ID</button>
-            <input
-                bind:value={remotePeerId}
-                placeholder="Enter peer ID to connect"
-            />
-            <button on:click={() => connect()}>Connect</button>
-            <button
-                on:click={() => navigator.clipboard.writeText(shareableLink)}
-                >Copy Shareable Link</button
-            >
+    <button class="toggle-controls" on:click={toggleControls}>
+        {isControlsVisible ? "✕" : "☰"}
+    </button>
+
+    {#if isControlsVisible}
+        <div class="controls" transition:slide>
+            <div class="control-section">
+                <input
+                    bind:value={displayName}
+                    placeholder="Enter display name"
+                />
+            </div>
+            <div class="control-section">
+                <div class="connection-info">
+                    Your ID: {peerId}
+                    <button on:click={copyPeerId}>Copy ID</button>
+                    <input
+                        bind:value={remotePeerId}
+                        placeholder="Enter peer ID to connect"
+                    />
+                    <button on:click={() => connect()}>Connect</button>
+                    <button
+                        on:click={() =>
+                            navigator.clipboard.writeText(shareableLink)}
+                    >
+                        Copy Shareable Link
+                    </button>
+                </div>
+            </div>
+            <div class="control-section">
+                <div class="drawing-controls">
+                    <input
+                        type="color"
+                        bind:value={brushColor}
+                        disabled={isRainbowMode}
+                    />
+                    <input
+                        type="range"
+                        bind:value={brushSize}
+                        min="1"
+                        max="50"
+                    />
+                    <span>Brush Size: {brushSize}</span>
+                    <button on:click={toggleRainbowMode}>
+                        {isRainbowMode ? "Disable" : "Enable"} Rainbow Mode
+                    </button>
+                </div>
+            </div>
+            <div class="control-section">
+                <button on:click={togglePartyMode}>
+                    {partyMode ? "Disable" : "Enable"} Party Mode
+                </button>
+            </div>
+            <div class="control-section">
+                <button on:click={toggleChat}>
+                    {isChatVisible ? "Hide" : "Show"} Chat
+                </button>
+            </div>
         </div>
-        <div class="drawing-controls">
-            <input
-                type="color"
-                bind:value={brushColor}
-                disabled={isRainbowMode}
-            />
-            <input type="range" bind:value={brushSize} min="1" max="50" />
-            <span>Brush Size: {brushSize}</span>
-            <button on:click={toggleRainbowMode}>
-                {isRainbowMode ? "Disable" : "Enable"} Rainbow Mode
-            </button>
-        </div>
-        <div class="party-mode">
-            <button on:click={togglePartyMode}>
-                {partyMode ? "Disable" : "Enable"} Party Mode
-            </button>
-        </div>
-        <div class="chat-toggle">
-            <button on:click={toggleChat}>
-                {isChatVisible ? "Hide" : "Show"} Chat
-            </button>
-        </div>
-    </div>
+    {/if}
 
     {#if isChatVisible}
-        <div class="chat-container">
+        <div class="chat-container" transition:slide>
             <div class="chat-messages">
                 {#each chatMessages as message}
-                    <div class="chat-message">
+                    <div class="chat-message" transition:fade>
                         <strong>{message.sender}:</strong>
                         {message.message}
                     </div>
@@ -481,52 +544,70 @@
         pointer-events: none;
     }
 
+    @keyframes float {
+        0%,
+        100% {
+            transform: translate(0, 0) rotate(0deg);
+        }
+        25% {
+            transform: translate(50px, -50px) rotate(90deg);
+        }
+        50% {
+            transform: translate(-50px, 50px) rotate(180deg);
+        }
+        75% {
+            transform: translate(50px, 50px) rotate(270deg);
+        }
+    }
+
     main {
         position: relative;
         width: 100vw;
         height: 100vh;
+        overflow: hidden;
     }
 
-    canvas {
-        position: absolute;
-        top: 0;
-        left: 0;
-        z-index: 1;
+    main.mobile {
+        height: calc(100vh - 60px);
+    }
+
+    .toggle-controls {
+        position: fixed;
+        top: 10px;
+        left: 10px;
+        z-index: 10;
+        font-size: 24px;
+        background-color: rgba(0, 0, 0, 0.7);
+        color: white;
+        border: none;
+        border-radius: 50%;
+        width: 40px;
+        height: 40px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        cursor: pointer;
     }
 
     .controls {
         position: fixed;
-        top: 10px;
+        top: 60px;
         left: 10px;
-        z-index: 4;
-        display: flex;
-        flex-direction: column;
-        gap: 10px;
+        z-index: 5;
         background-color: rgba(0, 0, 0, 0.7);
         padding: 10px;
         border-radius: 5px;
+        max-width: 300px;
+        max-height: calc(100vh - 80px);
+        overflow-y: auto;
     }
 
-    .connection-info,
-    .drawing-controls,
-    .party-mode,
-    .chat-toggle {
-        display: flex;
-        flex-direction: column;
-        gap: 5px;
+    .control-section {
+        margin-bottom: 10px;
     }
 
-    button {
-        padding: 5px 10px;
-        background-color: white;
-        color: black;
-        border: none;
-        border-radius: 5px;
-        cursor: pointer;
-    }
-
-    input {
-        padding: 5px;
+    .control-section:last-child {
+        margin-bottom: 0;
     }
 
     .chat-container {
@@ -550,6 +631,7 @@
 
     .chat-message {
         margin-bottom: 5px;
+        animation: fadeIn 0.3s ease-in-out;
     }
 
     .chat-input {
@@ -560,5 +642,31 @@
     .chat-input input {
         flex-grow: 1;
         margin-right: 5px;
+    }
+
+    @keyframes fadeIn {
+        from {
+            opacity: 0;
+        }
+        to {
+            opacity: 1;
+        }
+    }
+
+    /* Mobile-specific styles */
+    @media (max-width: 768px) {
+        .controls {
+            top: 60px;
+            left: 0;
+            right: 0;
+            max-width: 100%;
+            border-radius: 0;
+        }
+
+        .chat-container {
+            left: 10px;
+            right: 10px;
+            width: auto;
+        }
     }
 </style>
